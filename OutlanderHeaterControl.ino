@@ -3,7 +3,7 @@
 #include <TaskScheduler.h>
 
 unsigned int targetTemperature = 50;
-bool enabled = false;
+bool enabled = true;
 bool hvPresent = false;
 bool heating = false;
 unsigned int currentTemperature;
@@ -25,7 +25,7 @@ Scheduler runner;
 void setup() {
     Serial.begin(115200);
     Serial.println("Outlander Heater Control");
-    while (CAN_OK != CAN.begin(CAN_500KBPS, MCP_16MHz))              // init can bus : baudrate = 500k
+    while (CAN_OK != CAN.begin(CAN_500KBPS, MCP_8MHz))              // init can bus : baudrate = 500k
     {
         Serial.println("CAN BUS Shield init fail");
         Serial.println(" Init CAN BUS Shield again");
@@ -62,7 +62,7 @@ void ms10Task() {
 
 void ms100Task() {
   //send 0x188
-  if (enabled == true && currentTemperture < targetTemperature) {
+  if (enabled == true && currentTemperature < targetTemperature) {
    uint8_t canData[8];
    canData[0] = 0x03;
    canData[1] = 0x50;
@@ -93,6 +93,8 @@ void ms1000Task() {
   Serial.print(enabled);
   Serial.print(" Desired Water Temperature: ");
   Serial.print(targetTemperature);
+  Serial.println("");
+  Serial.println("");
 
 }
 
@@ -106,7 +108,6 @@ void loop() {
         CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
 
         unsigned int canId = CAN.getCanId();
-
         if (canId == 0x398) {
           //Heater status
           if (buf[5] == 0x00) {
