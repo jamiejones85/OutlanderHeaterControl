@@ -2,11 +2,16 @@
 #include <SPI.h>
 #include <TaskScheduler.h>
 
+#define MAXTEMP 85
+#define MINTEMP 40
 unsigned int targetTemperature = 50;
-bool enabled = true;
+bool enabled = false;
 bool hvPresent = false;
 bool heating = false;
 unsigned int currentTemperature;
+const int potPin = A0;
+const int ledPin = 3;
+
 
 const int SPI_CS_PIN = 10;
 
@@ -25,6 +30,8 @@ Scheduler runner;
 void setup() {
     Serial.begin(115200);
     Serial.println("Outlander Heater Control");
+    pinMode(ledPin, OUTPUT);
+    
     while (CAN_OK != CAN.begin(CAN_500KBPS, MCP_8MHz))              // init can bus : baudrate = 500k
     {
         Serial.println("CAN BUS Shield init fail");
@@ -61,6 +68,15 @@ void ms10Task() {
 }
 
 void ms100Task() {
+  int sensorValue = analogRead(potPin);
+  if (sensorValue > 100) {
+    enabled = true;
+  } else {
+    enabled = false;
+  }
+  targetTemperature = map(sensorValue, 100, 1023, MINTEMP, MAXTEMP);
+  digitalWrite(ledPin, enabled);
+   
   //send 0x188
   if (enabled == true && currentTemperature < targetTemperature) {
    uint8_t canData[8];
