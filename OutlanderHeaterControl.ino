@@ -2,6 +2,13 @@
 #include <SPI.h>
 #include <TaskScheduler.h>
 
+#define INVERTPOT true
+//#define OPENINVERTERCONTACTORS //uncomment to check can bus for Open Inverter opmode for contactors, prevents heating over precharge resistor
+#ifdef OPENINVERTERCONTACTORS
+unsigned long inverterLastRec;
+byte inverterStatus;
+#endif
+
 #define MAXTEMP 85
 #define MINTEMP 40
 unsigned int targetTemperature = 50;
@@ -69,16 +76,36 @@ void ms10Task() {
 
 void ms100Task() {
   int sensorValue = analogRead(potPin);
-  if (sensorValue > 100) {
-    enabled = true;
+
+  if (INVERTPOT) {
+    if (sensorValue < 923) {
+      enabled = true;
+    } else {
+      enabled = false;
+    }
   } else {
-    enabled = false;
+    if (sensorValue > 100) {
+      enabled = true;
+    } else {
+      enabled = false;
+    }
   }
-  targetTemperature = map(sensorValue, 100, 1023, MINTEMP, MAXTEMP);
+
+  if (INVERTPOT) {
+      targetTemperature = map(sensorValue, 1023, 100, MINTEMP, MAXTEMP);
+  } else {
+      targetTemperature = map(sensorValue, 100, 1023, MINTEMP, MAXTEMP);
+  }
+
   digitalWrite(ledPin, enabled);
    
   //send 0x188
-  if (enabled == true && currentTemperature < targetTemperature) {
+  #ifdef OPENINVERTERCONTACTORS
+  bool contactorsClosed = inverterStatus == 0x01;
+  #else
+  bool contactorsClosed = true;
+  #endif
+  if (contactorsClosed && enabled && currentTemperature < targetTemperature) {
    uint8_t canData[8];
    canData[0] = 0x03;
    canData[1] = 0x50;
@@ -120,7 +147,7 @@ void loop() {
   // put your main code here, to run repeatedly:
   runner.execute();
   if(CAN_MSGAVAIL == CAN.checkReceive())            // check if data coming
-    {
+  {
         CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
 
         unsigned int canId = CAN.getCanId();
@@ -147,5 +174,18 @@ void loop() {
             currentTemperature = temp1;
           }
         }
+        #ifdef OPENINVERTERCONTACTORS
+        if (canId == 0x02) {
+          inverterLastRec = millis();
+          inverterStatus = buf[0];
+        }
+        #endif
+
     }
+
+    #ifdef OPENINVERTERCONTACTORS
+      if(inverterLastRec + 200 < millis()) {
+        inverterStatus = 0;
+      }
+    #endif
 }
