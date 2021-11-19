@@ -8,6 +8,8 @@
 unsigned long inverterLastRec;
 byte inverterStatus;
 #endif
+unsigned long temperatureLastRec;
+
 
 #define MAXTEMP 85
 #define MINTEMP 40
@@ -91,6 +93,12 @@ void ms100Task() {
     }
   }
 
+  //if heater is not sending feedback, disable it, safety and that
+  if (millis() - temperatureLastRec > 500) {
+    enabled = false;
+    Serial.println("No Temperature recieved");
+  }
+
   if (INVERTPOT) {
       targetTemperature = map(sensorValue, 1023, 100, MINTEMP, MAXTEMP);
   } else {
@@ -109,12 +117,19 @@ void ms100Task() {
    uint8_t canData[8];
    canData[0] = 0x03;
    canData[1] = 0x50;
-   canData[2] = 0xA2;
    canData[3] = 0x4D;
    canData[4] = 0x00;
    canData[5] = 0x00;
    canData[6] = 0x00;
    canData[7] = 0x00;
+
+   //switch to lower power when reaching target temperature
+   if (currentTemperature < targetTemperature - 10) {
+    canData[2] = 0xA2;
+   } else {
+    canData[2] = 0x32;
+   }
+   
    CAN.sendMsgBuf(0x188, 0, sizeof(canData), canData);
   }
 
@@ -155,7 +170,7 @@ void loop() {
           //Heater status
           if (buf[5] == 0x00) {
             heating = false;
-          } else if (buf[5] == 0x20 || buf[5] == 0x40) {
+          } else if (buf[5] > 0) {
             heating = true;
           }
           //hv status
@@ -166,13 +181,14 @@ void loop() {
           }
 
           //temperatures
-          unsigned int temp1 = buf[3] - 50;
-          unsigned int temp2 = buf[4] - 50;
+          unsigned int temp1 = buf[3] - 40;
+          unsigned int temp2 = buf[4] - 40;
           if (temp2 > temp1) {
             currentTemperature = temp2;
           } else {
             currentTemperature = temp1;
           }
+          temperatureLastRec = millis();
         }
         #ifdef OPENINVERTERCONTACTORS
         if (canId == 0x02) {
