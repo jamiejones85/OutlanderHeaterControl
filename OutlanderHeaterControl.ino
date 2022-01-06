@@ -1,9 +1,17 @@
 #include <mcp_can.h>
 #include <SPI.h>
 #include <TaskScheduler.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 32 // OLED display height, in pixels
+#define OLED_RESET     4 // Reset pin # (or -1 if sharing Arduino reset pin)
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 #define INVERTPOT true
-//#define OPENINVERTERCONTACTORS //uncomment to check can bus for Open Inverter opmode for contactors, prevents heating over precharge resistor
+#define OPENINVERTERCONTACTORS //uncomment to check can bus for Open Inverter opmode for contactors, prevents heating over precharge resistor
 #ifdef OPENINVERTERCONTACTORS
 unsigned long inverterLastRec;
 byte inverterStatus;
@@ -13,11 +21,12 @@ unsigned long temperatureLastRec;
 
 #define MAXTEMP 85
 #define MINTEMP 40
-unsigned int targetTemperature = 50;
+unsigned int targetTemperature = 0;
 bool enabled = false;
 bool hvPresent = false;
 bool heating = false;
-unsigned int currentTemperature;
+int power = 20;
+int currentTemperature = 0;
 const int potPin = A0;
 const int ledPin = 3;
 
@@ -38,6 +47,13 @@ Scheduler runner;
 
 void setup() {
     Serial.begin(115200);
+
+  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
+    if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3C for 128x32
+      Serial.println(F("SSD1306 allocation failed"));
+      for(;;); // Don't proceed, loop forever
+    }
+    displayOff();
     Serial.println("Outlander Heater Control");
     pinMode(ledPin, OUTPUT);
     
@@ -59,7 +75,36 @@ void setup() {
 
     runner.addTask(ms1000);
     ms1000.enable();
+
 }
+
+void displayTemperature(void) {
+  display.clearDisplay();
+  display.setTextSize(3); // Draw 2X-scale text
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(20, 10);
+  display.print(currentTemperature);
+  display.print("/");
+  display.print(targetTemperature);
+
+  if (power == 2) {
+      display.fillRect(0, 0, 10, SCREEN_HEIGHT, SSD1306_WHITE);
+  } else if (power == 1) {
+      display.fillRect(0, SCREEN_HEIGHT/2, 10, SCREEN_HEIGHT, SSD1306_WHITE);
+  }
+
+  display.display();      // Show initial text
+}
+
+void displayOff(void) {
+  display.clearDisplay();
+  display.setTextSize(3); // Draw 2X-scale text
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(40, 10);
+  display.println(F("Off"));
+  display.display();      // Show initial text
+}
+
 
 void ms10Task() {
   //send 0x285
@@ -94,7 +139,7 @@ void ms100Task() {
   }
 
   //if heater is not sending feedback, disable it, safety and that
-  if (millis() - temperatureLastRec > 500) {
+  if (millis() - temperatureLastRec > 1000) {
     enabled = false;
     Serial.println("No Temperature recieved");
   }
@@ -105,14 +150,25 @@ void ms100Task() {
       targetTemperature = map(sensorValue, 100, 1023, MINTEMP, MAXTEMP);
   }
 
-  digitalWrite(ledPin, enabled);
-   
-  //send 0x188
+    //send 0x188
   #ifdef OPENINVERTERCONTACTORS
   bool contactorsClosed = inverterStatus == 0x01;
+  if (!contactorsClosed) {
+    enabled = false;
+  }
   #else
   bool contactorsClosed = true;
   #endif
+
+  digitalWrite(ledPin, enabled);
+
+  if (enabled) {
+    displayTemperature();
+  } else {
+    displayOff();
+  }
+   
+
   if (contactorsClosed && enabled && currentTemperature < targetTemperature) {
    uint8_t canData[8];
    canData[0] = 0x03;
@@ -126,11 +182,15 @@ void ms100Task() {
    //switch to lower power when reaching target temperature
    if (currentTemperature < targetTemperature - 10) {
     canData[2] = 0xA2;
+    power = 2;
    } else {
     canData[2] = 0x32;
+    power = 1;
    }
    
-   CAN.sendMsgBuf(0x188, 0, sizeof(canData), canData);
+    CAN.sendMsgBuf(0x188, 0, sizeof(canData), canData);
+  } else {
+    power = 0;
   }
 
 }
@@ -151,6 +211,8 @@ void ms1000Task() {
   Serial.print(enabled);
   Serial.print(" Desired Water Temperature: ");
   Serial.print(targetTemperature);
+  Serial.print(" Inverter: ");
+  Serial.print(inverterStatus);
   Serial.println("");
   Serial.println("");
 
@@ -170,6 +232,7 @@ void loop() {
           //Heater status
           if (buf[5] == 0x00) {
             heating = false;
+            power = 0;
           } else if (buf[5] > 0) {
             heating = true;
           }
@@ -200,8 +263,9 @@ void loop() {
     }
 
     #ifdef OPENINVERTERCONTACTORS
-      if(inverterLastRec + 200 < millis()) {
-        inverterStatus = 0;
-      }
+//      if(inverterLastRec + 500 < millis()) {
+//        inverterStatus = 0;
+//      }
     #endif
+
 }
